@@ -3,14 +3,12 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 
-// --- Express & Socket.io Setup ---
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// Web UI Served directly
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -84,32 +82,35 @@ app.get('/', (req, res) => {
   `);
 });
 
-// --- Mineflayer Bot Logic ---
 function createBot() {
+  io.emit('chatMessage', '[SYSTEM]: Attempting to connect to AppleMC...');
+
   const bot = mineflayer.createBot({
-    host: 'play.applemc.fun',          // AppleMC IP
-    username: 'trex12931', // 👈 Apne account ka username ya email daal
-    auth: 'offline',                    // AppleMC cracked/offline mode allow karta hai toh 'offline', varna 'microsoft'
-    version: false                      // Auto-detect server version
+    host: 'play.applemc.fun',
+    port: 25565,
+    username: 'trex12931', // 👈 Apna username check kar lena
+    auth: 'offline',                    // Agar premium account hai to 'microsoft' kar dena
+    version: '1.20.1',                  // Strict version match fixes socket drops on proxies
+    checkTimeoutInterval: 60 * 1000
   });
 
   bot.on('spawn', () => {
     io.emit('chatMessage', '[SYSTEM]: Bot successfully connected & spawned in AppleMC!');
     
-    // Anti-AFK Jump logic (Har 60 second me ek jump)
+    // Anti-AFK Jump logic
     setInterval(() => {
-      bot.setControlState('jump', true);
-      setTimeout(() => bot.setControlState('jump', false), 500);
-    }, 60000);
+      if (bot && bot.entity) {
+        bot.setControlState('jump', true);
+        setTimeout(() => bot.setControlState('jump', false), 500);
+      }
+    }, 45000);
   });
 
-  // Minecraft Chat ko Web UI tak pahunchane ke liye
   bot.on('chat', (username, message) => {
     if (username === bot.username) return;
     io.emit('chatMessage', `<${username}> ${message}`);
   });
 
-  // System & Action bar messages capture karne ke liye
   bot.on('message', (jsonMsg) => {
     const str = jsonMsg.toString();
     if (str.trim()) {
@@ -118,8 +119,8 @@ function createBot() {
   });
 
   bot.on('end', (reason) => {
-    io.emit('chatMessage', `[SYSTEM]: Disconnected: ${reason}. Reconnecting in 10s...`);
-    setTimeout(createBot, 10000);
+    io.emit('chatMessage', `[SYSTEM]: Disconnected (${reason}). Retrying in 25 seconds to avoid IP rate-limit...`);
+    setTimeout(createBot, 25000); // 25s delay to clear server rate-limit
   });
 
   bot.on('error', (err) => {
@@ -127,11 +128,10 @@ function createBot() {
     io.emit('chatMessage', `[SYSTEM ERROR]: ${err.message}`);
   });
 
-  // Web Chat UI se game me message bhejne ka event
   io.removeAllListeners('connection');
   io.on('connection', (socket) => {
     socket.on('sendChatMessage', (msg) => {
-      bot.chat(msg);
+      if (bot) bot.chat(msg);
       io.emit('chatMessage', `<You (Web)> ${msg}`);
     });
   });
@@ -139,7 +139,6 @@ function createBot() {
 
 createBot();
 
-// Web Server Listener
 server.listen(PORT, () => {
   console.log(`Web Controller active on port ${PORT}`);
 });
